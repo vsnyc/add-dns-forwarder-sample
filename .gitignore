@@ -1,6 +1,26 @@
 # Compiled class file
 *.class
 
+#intellij
+.idea
+*.iml
+*.iws
+
+# General
+.DS_Store
+.AppleDouble
+.LSOverride
+debug
+
+#AWS Quick Starts
+.taskcat_overrides.yml
+
+# Icon must end with two \r
+Icon
+
+# Thumbnails
+._*
+
 # Log file
 *.log
 

@@ -1,0 +1,305 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  This template adds server level forwarders to a DNS server.
+Parameters:
+  DomainAdminPassword:
+    AllowedPattern: (?=^.{6,255}$)((?=.*\d)(?=.*[A-Z])(?=.*[a-z])|(?=.*\d)(?=.*[^A-Za-z0-9])(?=.*[a-z])|(?=.*[^A-Za-z0-9])(?=.*[A-Z])(?=.*[a-z])|(?=.*\d)(?=.*[A-Z])(?=.*[^A-Za-z0-9]))^.*
+    Description: Password for the domain admin user. Must be at least 8 characters
+      containing letters, numbers and symbols
+    MaxLength: '32'
+    MinLength: '8'
+    NoEcho: 'true'
+    Type: String
+  DomainAdminUser:
+    AllowedPattern: '[a-zA-Z0-9]*'
+    Default: StackAdmin
+    Description: User name for the account that will be added as Domain Administrator.
+      This is separate from the default "Administrator" account
+    MaxLength: '25'
+    MinLength: '5'
+    Type: String
+  DomainDNSName:
+    AllowedPattern: '[a-zA-Z0-9]+\..+'
+    Default: example.com
+    Description: Fully qualified domain name (FQDN) of the forest root domain e.g.
+      corp.example.com
+    MaxLength: '255'
+    MinLength: '2'
+    Type: String
+  DomainMemberSGID:
+    Description: ID of the Domain Member Security Group (e.g., sg-7f16e910)
+    Type: AWS::EC2::SecurityGroup::Id
+  DomainNetBIOSName:
+    AllowedPattern: '[a-zA-Z0-9]+'
+    Default: example
+    Description: NetBIOS name of the domain (upto 15 characters) for users of earlier
+      versions of Windows e.g. CORP
+    MaxLength: '15'
+    MinLength: '1'
+    Type: String
+  PublicSubnet1ID:
+    Description: ID of the public subnet 1 in Availability Zone 1 (e.g., subnet-e3246d8e)
+    Type: AWS::EC2::Subnet::Id
+  PublicSubnet2ID:
+    Description: ID of the public subnet 2 in Availability Zone 2 (e.g., subnet-e3246d8e)
+    Type: AWS::EC2::Subnet::Id
+  QSS3BucketName:
+    AllowedPattern: ^[0-9a-zA-Z]+([0-9a-zA-Z-]*[0-9a-zA-Z])*$
+    ConstraintDescription: Quick Start bucket name can include numbers, lowercase
+      letters, uppercase letters, and hyphens (-). It cannot start or end with a hyphen
+      (-).
+    Default: aws-quickstart
+    Description: S3 bucket name for the Quick Start assets. Quick Start bucket name
+      can include numbers, lowercase letters, uppercase letters, and hyphens (-).
+      It cannot start or end with a hyphen (-).
+    Type: String
+  QSS3KeyPrefix:
+    AllowedPattern: ^[0-9a-zA-Z-/]*$
+    ConstraintDescription: Quick Start key prefix can include numbers, lowercase letters,
+      uppercase letters, hyphens (-), and forward slash (/).
+    Default: quickstart-cloudvideoediting/
+    Description: S3 key prefix for the Quick Start assets. Quick Start key prefix
+      can include numbers, lowercase letters, uppercase letters, hyphens (-), and
+      forward slash (/).
+    Type: String
+  RDGWStack:
+    Type: String
+    Description: ID of the RDGW Stack
+  VPCCIDR:
+    Description: The CIDR block of the VPC
+    Type: String
+Resources:
+  SSMSendCommandPolicy:
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - 'ssm:SendCommand'
+            Effect: Allow
+            Resource: '*'
+          - Action:
+              - 'ssm:SendCommand'
+            Effect: Allow
+             Resource: !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/${GetStackResources.bastion_instance_id}"
+
+  SSMSendCommandLambdaRole:
+    DependsOn:
+      - SSMSendCommandPolicy
+    Type: 'AWS::IAM::Role'
+    Properties:
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AmazonEC2ReadOnlyAccess'
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+        - !Ref SSMSendCommandPolicy
+
+  AddForwarderDocument:
+    Type: AWS::SSM::Document
+    Properties:
+      DocumentType: Command
+      Content:
+        schemaVersion: '2.2'
+        description: Add DNS forwarder
+        parameters:
+          DomainAdminUser:
+            type: String
+            description: Domain admin user name
+            default: !Ref 'DomainAdminUser'
+          DomainAdminPassword:
+            type: String
+            description: Domain admin password
+            default: !Ref 'DomainAdminPassword'
+          DomainDNSName:
+            type: String
+            description: Domain DNS name
+            default: !Ref 'DomainDNSName'
+          VPCCIDR:
+            type: String
+            description: VPC CIDR
+            default: !Ref 'VPCCIDR'
+          QSS3BucketName:
+            type: String
+            description: S3 bucket name for the Quick Start assets
+            default: !Ref QSS3BucketName
+          QSS3KeyPrefix:
+            type: String
+            description: S3 key prefix for the Quick Start assets
+            default: !Ref QSS3KeyPrefix
+        mainSteps:
+          - action: aws:runPowerShellScript
+            name: 1_DownloadAddForwarderScript
+            inputs:
+              runCommand:
+                - Import-Module BitsTransfer
+                - Start-BitsTransfer -Source "https://{{QSS3BucketName}}.s3.amazonaws.com/{{QSS3KeyPrefix}}scripts/add_dns_forwarder.ps1"
+                  -Destination "C:\cfn\scripts\add_dns_forwarder.ps1"
+          - action: aws:runPowerShellScript
+            name: 2_AddDNSForwarder
+            inputs:
+              runCommand:
+                - '& "C:\cfn\scripts\add_dns_forwarder.ps1" {{DomainDNSName}} {{DomainAdminUser}} {{DomainAdminPassword}} {{VPCCIDR}}'
+              workingDirectory: 'C:\cfn\scripts'
+
+  ExecuteAddForwarderLambda:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - AddForwarderDocument
+      - SSMSendCommandLambdaRole
+    Properties:
+      Handler: index.lambda_handler
+      Runtime: python3.7
+      Code:
+        ZipFile: |
+            import boto3
+            import os, time,json
+            import cfnresponse
+            import logging
+
+            def lambda_handler(event, context):
+                print('Received event: %s' % json.dumps(event))
+                status = cfnresponse.SUCCESS
+                try:
+                    if event['RequestType'] == 'Delete':
+                        cfnresponse.send(event, context, status, {})
+                    else:
+                        ssm = boto3.client('ssm')
+
+                        instanceId = event['ResourceProperties']['InstanceId']
+                        ssmDocument = event['ResourceProperties']['SSMDocument']
+                        responseData = {}
+
+                        response=ssm.send_command(
+                            InstanceIds = [instanceId],
+                            DocumentName=ssmDocument,
+                            TimeoutSeconds=3600,
+                            Comment='Add DNS forwarder to managed AD',
+                            CloudWatchOutputConfig={'CloudWatchOutputEnabled': True},
+                            MaxConcurrency='50',
+                            MaxErrors='5',
+                        )
+
+                        cmdId = response['Command']['CommandId']
+                        responseData['CommandId'] = cmdId
+                        print('Started add DNS forwarder in CommandId: ' + cmdId)
+                        cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
+                except Exception as e:
+                    logging.error('Exception: %s' % e, exc_info=True)
+                    status = cfnresponse.FAILED
+                    cfnresponse.send(event, context, status, {}, None)
+      Description: Executes add DNS forwarder SSM document on a Windows server
+      MemorySize: 320
+      Timeout: 180
+      Role: !GetAtt 'SSMSendCommandLambdaRole.Arn'
+
+  ExecuteAddForwarderDocument:
+    Type: Custom::ExecuteAddForwarderDocument
+    Version: '1.0'
+    Properties:
+      ServiceToken: !GetAtt 'ExecuteAddForwarderLambda.Arn'
+      SSMDocument: !Ref 'AddForwarderDocument'
+      InstanceId: !GetAtt 'GetStackResources.bastion_instance_id'
+
+  DescribeStackRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: ["lambda.amazonaws.com"]
+            Action: "sts:AssumeRole"
+      Path: "/"
+      Policies:
+        - PolicyName: "lambda_policy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Resource: "arn:aws:logs:*:*:*"
+              - Effect: "Allow"
+                Action:
+                  - "cloudformation:DescribeStackResources"
+                Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/*"
+              - Effect: "Allow"
+                Action:
+                  - "autoscaling:DescribeAutoScalingGroups"
+                Resource: "*"
+
+  DescribeStackResourcesLambda:
+    Type: "AWS::Lambda::Function"
+    DependsOn:
+      - DescribeStackRole
+    Properties:
+      Code:
+        ZipFile: |
+          import boto3
+          import os
+          import logging
+          import json
+          import cfnresponse
+
+          def extract_asg_name(stack_name):
+              try:
+                  cfn_client = boto3.client('cloudformation')
+                  rdgw_asg_resource = cfn_client.describe_stack_resources(
+                      StackName=stack_name,
+                      LogicalResourceId='RDGWAutoScalingGroup'
+                  )
+                  rdgw_asg_id = efs_stack['StackResources'][0]['PhysicalResourceId']
+                  return rdgw_asg_id
+              except Exception as e:
+                  print(e)
+                  return str(e)
+
+          def extract_bastion_instance_id(asg_name):
+              try:
+                  asg_client = boto3.client('autoscaling')
+                  responseAsg = asg_client.describe_auto_scaling_groups(AutoScalingGroupNames=[asg_name])
+                  BASTION_INSTANCE_ID = responseAsg['AutoScalingGroups'][0]['Instances'][0]['InstanceId']
+                  return BASTION_INSTANCE_ID
+              except Exception as e:
+                  print(e)
+                  return str(e)
+
+          def handler(event, context):
+            print('Received event: %s' % json.dumps(event))
+            status = cfnresponse.SUCCESS
+            try:
+                if event['RequestType'] == 'Delete':
+                    cfnresponse.send(event, context, status, {})
+                else:
+                    RDGW_STACK_ID = event['ResourceProperties']['RDGWStack']
+                    responseData = {}
+                    BASTION_ASG_NAME = extract_asg_name(RDGW_STACK_ID)
+                    responseData['bastion_instance_id'] = extract_bastion_instance_id(BASTION_ASG_NAME)
+                    print(responseData)
+                    cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
+            except Exception as e:
+                logging.error('Exception: %s' % e, exc_info=True)
+                status = cfnresponse.FAILED
+                cfnresponse.send(event, context, status, {}, None)
+      Handler: "index.handler"
+      Runtime: "python3.6"
+      Timeout: "5"
+      Role: !GetAtt DescribeStackRole.Arn
+
+  GetStackResources:
+    Type: "Custom::GetStackResources"
+    Version: "1.0"
+    Properties:
+      ServiceToken: !GetAtt DescribeStackResourcesLambda.Arn
+      RDGWStack: !Ref 'RDGWStack'

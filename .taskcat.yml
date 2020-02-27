@@ -1,0 +1,21 @@
+general:
+  parameters:
+    KeyPairName: $[taskcat_getkeypair]
+project:
+  name: add-dns-forwarder-sample
+  owner: vsnyc@users.noreply.github.com
+  regions:
+    - us-east-2
+tests:
+  default:
+    template: ./templates/sample-master.yaml
+    parameters:
+      AvailabilityZones: $[taskcat_genaz_2]
+      DomainAdminPassword: $[taskcat_genpass_12A]
+      DomainAdminUser: "Admin"
+      DomainDNSName: "example.com"
+      DomainNetBIOSName: "example"
+      QSS3BucketName: $[taskcat_autobucket]
+      QSS3KeyPrefix: "add-dns-forwarder-sample/"
+      RDGWCIDR: "10.0.0.0/16"
+      VPCCIDR: "10.0.0.0/16"
