@@ -40,7 +40,7 @@ Parameters:
     AllowedPattern: ^[0-9a-zA-Z-/]*$
     ConstraintDescription: Quick Start key prefix can include numbers, lowercase letters,
       uppercase letters, hyphens (-), and forward slash (/).
-    Default: quickstart-cloudvideoediting/
+    Default: add-dns-forwarder-sample/
     Description: S3 key prefix for the Quick Start assets. Quick Start key prefix
       can include numbers, lowercase letters, uppercase letters, hyphens (-), and
       forward slash (/).
@@ -242,7 +242,7 @@ Resources:
                       StackName=stack_name,
                       LogicalResourceId='RDGWAutoScalingGroup'
                   )
-                  rdgw_asg_id = efs_stack['StackResources'][0]['PhysicalResourceId']
+                  rdgw_asg_id = rdgw_asg_resource['StackResources'][0]['PhysicalResourceId']
                   return rdgw_asg_id
               except Exception as e:
                   print(e)
